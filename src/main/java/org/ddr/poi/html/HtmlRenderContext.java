@@ -1332,6 +1332,12 @@ public class HtmlRenderContext extends RenderContext<String> {
     public CSSStyleDeclarationImpl getCssStyleDeclaration(Element element) {
         String style = element.attr(HtmlConstants.ATTR_STYLE);
         CSSStyleDeclarationImpl cssStyleDeclaration = CSSStyleUtils.parse(style);
+        //存在样式没有读取出来重新获取
+        if (style.length()>0){
+            while (StringUtils.isBlank(cssStyleDeclaration.toString())){
+                cssStyleDeclaration = CSSStyleUtils.parse(style);
+            }
+        }
         CSSStyleUtils.split(cssStyleDeclaration);
         return cssStyleDeclaration;
     }
