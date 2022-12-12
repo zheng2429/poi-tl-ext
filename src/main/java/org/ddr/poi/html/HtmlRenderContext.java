@@ -28,13 +28,19 @@ import org.apache.poi.xwpf.usermodel.IBody;
 import org.apache.poi.xwpf.usermodel.IRunBody;
 import org.apache.poi.xwpf.usermodel.SVGPictureData;
 import org.apache.poi.xwpf.usermodel.SVGRelation;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFFooter;
+import org.apache.poi.xwpf.usermodel.XWPFFootnote;
+import org.apache.poi.xwpf.usermodel.XWPFHeader;
 import org.apache.poi.xwpf.usermodel.XWPFHyperlinkRun;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFPicture;
 import org.apache.poi.xwpf.usermodel.XWPFRelation;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.apache.poi.xwpf.usermodel.XWPFStyle;
 import org.apache.poi.xwpf.usermodel.XWPFStyles;
 import org.apache.poi.xwpf.usermodel.XWPFTable;
+import org.apache.poi.xwpf.usermodel.XWPFTableCell;
 import org.apache.xmlbeans.XmlCursor;
 import org.apache.xmlbeans.XmlObject;
 import org.apache.xmlbeans.impl.xb.xmlschema.SpaceAttribute;
@@ -60,7 +66,14 @@ import org.openxmlformats.schemas.drawingml.x2006.main.CTNonVisualGraphicFramePr
 import org.openxmlformats.schemas.drawingml.x2006.main.CTOfficeArtExtension;
 import org.openxmlformats.schemas.drawingml.x2006.main.CTOfficeArtExtensionList;
 import org.openxmlformats.schemas.drawingml.x2006.picture.CTPicture;
+import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.CTAnchor;
 import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.CTInline;
+import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.CTPosH;
+import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.CTPosV;
+import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.STAlignH;
+import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.STAlignV;
+import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.STRelFromH;
+import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.STRelFromV;
 import org.openxmlformats.schemas.officeDocument.x2006.sharedTypes.STVerticalAlignRun;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTBookmark;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTColor;
@@ -228,24 +241,36 @@ public class HtmlRenderContext extends RenderContext<String> {
 
         numberingContext = new NumberingContext(getXWPFDocument());
 
+        long w = RenderUtils.A4_WIDTH * Units.EMU_PER_DXA;
+        long h = RenderUtils.A4_HEIGHT * Units.EMU_PER_DXA;
+        long top = RenderUtils.DEFAULT_TOP_MARGIN * Units.EMU_PER_DXA;
+        long right = RenderUtils.DEFAULT_RIGHT_MARGIN * Units.EMU_PER_DXA;
+        long bottom = RenderUtils.DEFAULT_BOTTOM_MARGIN * Units.EMU_PER_DXA;
+        long left = RenderUtils.DEFAULT_LEFT_MARGIN * Units.EMU_PER_DXA;
         CTSectPr sectPr = getXWPFDocument().getDocument().getBody().getSectPr();
-        CTPageSz pgSz = sectPr.getPgSz();
+        if (sectPr != null) {
+            CTPageSz pgSz = sectPr.getPgSz();
 
-        long w = POIXMLUnits.parseLength(pgSz.xgetW());
+            if (pgSz != null) {
+                w = POIXMLUnits.parseLength(pgSz.xgetW());
+                h = POIXMLUnits.parseLength(pgSz.xgetH());
+            }
+
+            CTPageMar pgMar = sectPr.getPgMar();
+            if (pgMar != null) {
+                top = POIXMLUnits.parseLength(pgMar.xgetTop());
+                right = POIXMLUnits.parseLength(pgMar.xgetRight());
+                bottom = POIXMLUnits.parseLength(pgMar.xgetBottom());
+                left = POIXMLUnits.parseLength(pgMar.xgetLeft());
+            }
+        }
+
         pageWidth = new CSSLength(w, CSSLengthUnit.EMU);
-        long h = POIXMLUnits.parseLength(pgSz.xgetH());
         pageHeight = new CSSLength(h, CSSLengthUnit.EMU);
-
-        CTPageMar pgMar = sectPr.getPgMar();
-        long top = POIXMLUnits.parseLength(pgMar.xgetTop());
         marginTop = new CSSLength(top, CSSLengthUnit.EMU);
-        long right = POIXMLUnits.parseLength(pgMar.xgetRight());
         marginRight = new CSSLength(right, CSSLengthUnit.EMU);
-        long bottom = POIXMLUnits.parseLength(pgMar.xgetBottom());
         marginBottom = new CSSLength(bottom, CSSLengthUnit.EMU);
-        long left = POIXMLUnits.parseLength(pgMar.xgetLeft());
         marginLeft = new CSSLength(left, CSSLengthUnit.EMU);
-
         availablePageWidth = (int) (w - left - right);
         availablePageHeight = (int) (h - top - bottom);
 
@@ -968,8 +993,20 @@ public class HtmlRenderContext extends RenderContext<String> {
             throws IOException, InvalidFormatException {
         CTR ctr = newRun();
 
-        currentRun.addPicture(pictureData, pictureType, filename, width, height);
+        XWPFPicture xwpfPicture = currentRun.addPicture(pictureData, pictureType, filename, width, height);
         CTR r = currentRun.getCTR();
+
+        boolean isSvg = svgData != null;
+        if (isSvg) {
+            attachSvgData(xwpfPicture, svgData);
+        }
+
+        CSSStyleDeclarationImpl styleDeclaration = currentElementStyle();
+        String cssFloat = styleDeclaration.getPropertyValue(HtmlConstants.CSS_FLOAT);
+        boolean floatLeft = HtmlConstants.LEFT.equals(cssFloat);
+        boolean floatRight = !floatLeft && HtmlConstants.RIGHT.equals(cssFloat);
+        // vertical-align seems not working
+        boolean floated = floatLeft || floatRight;
 
         CTDrawing drawing = null;
         if (r != ctr) {
@@ -977,39 +1014,60 @@ public class HtmlRenderContext extends RenderContext<String> {
             drawing = r.getDrawingArray(lastDrawingIndex);
             ctr.setDrawingArray(new CTDrawing[]{drawing});
             r.removeDrawing(lastDrawingIndex);
-        } else if (svgData != null) {
+            drawing = ctr.getDrawingArray(0);
+        } else if (isSvg || floated) {
             drawing = ctr.getDrawingArray(ctr.sizeOfDrawingArray() - 1);
         }
 
-        if (svgData != null) {
-            CTInline[] inlineArray = drawing.getInlineArray();
-            if (inlineArray.length > 0) {
-                CTInline ctInline = inlineArray[0];
-                String svgRelId = getXWPFDocument().addPictureData(svgData, SVGPictureData.PICTURE_TYPE_SVG);
+        if (drawing != null && drawing.sizeOfInlineArray() > 0) {
+            if (floated) {
+                CTAnchor ctAnchor = RenderUtils.inlineToAnchor(drawing);
+
+                CTPosH ctPosH = ctAnchor.addNewPositionH();
+                ctPosH.setRelativeFrom(STRelFromH.MARGIN);
+                ctPosH.setAlign(floatRight ? STAlignH.RIGHT : STAlignH.LEFT);
+
+                CTPosV ctPosV = ctAnchor.addNewPositionV();
+                ctPosV.setRelativeFrom(STRelFromV.PARAGRAPH);
+                ctPosV.setAlign(STAlignV.TOP);
+
+                if (isSvg) {
+                    CTNonVisualGraphicFrameProperties properties = ctAnchor.addNewCNvGraphicFramePr();
+                    CTGraphicalObjectFrameLocking frameLocking = properties.addNewGraphicFrameLocks();
+                    frameLocking.setNoChangeAspect(true);
+                }
+            } else if (isSvg) {
+                CTInline ctInline = drawing.getInlineArray(0);
                 CTNonVisualGraphicFrameProperties properties = ctInline.isSetCNvGraphicFramePr()
                         ? ctInline.getCNvGraphicFramePr() : ctInline.addNewCNvGraphicFramePr();
                 CTGraphicalObjectFrameLocking frameLocking = properties.isSetGraphicFrameLocks()
                         ? properties.getGraphicFrameLocks() : properties.addNewGraphicFrameLocks();
                 frameLocking.setNoChangeAspect(true);
-
-                XmlCursor xmlCursor = ctInline.getGraphic().getGraphicData().newCursor();
-                if (xmlCursor.toFirstChild()) {
-                    CTPicture ctPicture = (CTPicture) xmlCursor.getObject();
-                    CTBlip blip = ctPicture.getBlipFill().getBlip();
-                    if (blip != null) {
-                        CTOfficeArtExtensionList extList = blip.isSetExtLst() ? blip.getExtLst() : blip.addNewExtLst();
-                        CTOfficeArtExtension svgBitmap = extList.addNewExt();
-                        svgBitmap.setUri(SVGRelation.SVG_URI);
-                        XmlCursor cur = svgBitmap.newCursor();
-                        cur.toEndToken();
-                        cur.beginElement(SVGRelation.SVG_QNAME);
-                        cur.insertNamespace(SVGRelation.SVG_PREFIX, SVGRelation.MS_SVG_NS);
-                        cur.insertAttributeWithValue(SVGRelation.EMBED_TAG, svgRelId);
-                        cur.dispose();
-                    }
-                }
-                xmlCursor.dispose();
             }
+        }
+    }
+
+    /**
+     * 附加SVG数据
+     *
+     * @param xwpfPicture 图片
+     * @param svgData SVG数据
+     * @throws InvalidFormatException 非法格式
+     */
+    private void attachSvgData(XWPFPicture xwpfPicture, byte[] svgData) throws InvalidFormatException {
+        CTPicture ctPicture = xwpfPicture.getCTPicture();
+        String svgRelId = getXWPFDocument().addPictureData(svgData, SVGPictureData.PICTURE_TYPE_SVG);
+        CTBlip blip = ctPicture.getBlipFill().getBlip();
+        if (blip != null) {
+            CTOfficeArtExtensionList extList = blip.isSetExtLst() ? blip.getExtLst() : blip.addNewExtLst();
+            CTOfficeArtExtension svgBitmap = extList.addNewExt();
+            svgBitmap.setUri(SVGRelation.SVG_URI);
+            XmlCursor cur = svgBitmap.newCursor();
+            cur.toEndToken();
+            cur.beginElement(SVGRelation.SVG_QNAME);
+            cur.insertNamespace(SVGRelation.SVG_PREFIX, SVGRelation.MS_SVG_NS);
+            cur.insertAttributeWithValue(SVGRelation.EMBED_TAG, svgRelId);
+            cur.dispose();
         }
     }
 
@@ -1130,7 +1188,15 @@ public class HtmlRenderContext extends RenderContext<String> {
     }
 
     public void renderDocument(Document document) {
-        for (Node node : document.body().childNodes()) {
+        Element body = document.body();
+        Element html = body.parent();
+        if (html.hasAttr(HtmlConstants.ATTR_STYLE)) {
+            pushInlineStyle(getCssStyleDeclaration(html), html.isBlock());
+        }
+        if (body.hasAttr(HtmlConstants.ATTR_STYLE)) {
+            pushInlineStyle(getCssStyleDeclaration(body), body.isBlock());
+        }
+        for (Node node : body.childNodes()) {
             renderNode(node);
         }
     }
@@ -1184,6 +1250,10 @@ public class HtmlRenderContext extends RenderContext<String> {
                 globalCursor.push();
                 XWPFTable xwpfTable = container.insertNewTbl(globalCursor);
                 globalCursor.pop();
+                if (dedupeParagraph != null) {
+                    removeParagraph(container, dedupeParagraph);
+                    dedupeParagraph = null;
+                }
                 // 新增时会自动创建一行一列，会影响自定义的表格渲染逻辑，故删除
                 xwpfTable.removeRow(0);
 
@@ -1224,6 +1294,34 @@ public class HtmlRenderContext extends RenderContext<String> {
         }
 
         renderElementEnd(element, this, elementRenderer, blocked);
+    }
+
+    private void removeParagraph(IBody container, XWPFParagraph paragraph) {
+        switch (container.getPartType()) {
+            case CONTENTCONTROL:
+                break;
+            case DOCUMENT:
+                XWPFDocument xwpfDocument = (XWPFDocument) container;
+                int posOfParagraph = xwpfDocument.getPosOfParagraph(paragraph);
+                xwpfDocument.removeBodyElement(posOfParagraph);
+                break;
+            case HEADER:
+                XWPFHeader xwpfHeader = (XWPFHeader) container;
+                xwpfHeader.removeParagraph(paragraph);
+                break;
+            case FOOTER:
+                XWPFFooter xwpfFooter = (XWPFFooter) container;
+                xwpfFooter.removeParagraph(paragraph);
+                break;
+            case FOOTNOTE:
+                XWPFFootnote xwpfFootnote = (XWPFFootnote) container;
+                xwpfFootnote.getParagraphs().remove(paragraph);
+                break;
+            case TABLECELL:
+                XWPFTableCell xwpfTableCell = (XWPFTableCell) container;
+                xwpfTableCell.removeParagraph(xwpfTableCell.getParagraphs().indexOf(paragraph));
+                break;
+        }
     }
 
     /**
