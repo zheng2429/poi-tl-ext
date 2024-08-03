@@ -107,6 +107,7 @@ import javax.xml.namespace.QName;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.net.URI;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Set;
@@ -388,6 +389,12 @@ public class HtmlRenderContext extends RenderContext<String> {
      * @param uri 链接地址
      */
     public void startHyperlink(String uri) {
+        try {
+            URI.create(uri);
+        } catch (Exception e) {
+            log.warn("Illegal href", e);
+            uri = "#";
+        }
         if (isBlocked()) {
             XWPFParagraph paragraph = getClosestParagraph();
             currentRun = paragraph.createHyperlinkRun(uri);
@@ -1273,8 +1280,10 @@ public class HtmlRenderContext extends RenderContext<String> {
                 globalCursor.push();
                 XWPFTable xwpfTable = container.insertNewTbl(globalCursor);
                 globalCursor.pop();
-                if (dedupeParagraph != null) {
-                    removeParagraph(container, dedupeParagraph);
+                if (dedupeParagraph != null && !numberingContext.contains(dedupeParagraph)) {
+                    if (!dedupeParagraph.equals(getRun().getParent()) && isEmptyParagraph(dedupeParagraph)) {
+                        removeParagraph(container, dedupeParagraph);
+                    }
                     unmarkDedupe();
                 }
                 // 新增时会自动创建一行一列，会影响自定义的表格渲染逻辑，故删除
@@ -1317,6 +1326,19 @@ public class HtmlRenderContext extends RenderContext<String> {
         }
 
         renderElementEnd(element, this, elementRenderer, blocked);
+    }
+
+    private boolean isEmptyParagraph(XWPFParagraph paragraph) {
+        for (XWPFRun run : paragraph.getRuns()) {
+            if (StringUtils.isNotBlank(run.text())) {
+                return false;
+            }
+            if (!run.getEmbeddedPictures().isEmpty()) {
+                return false;
+            }
+        }
+        CTP ctp = paragraph.getCTP();
+        return ctp.sizeOfOMathArray() == 0 && ctp.sizeOfOMathParaArray() == 0;
     }
 
     private void removeParagraph(IBody container, XWPFParagraph paragraph) {
@@ -1385,6 +1407,7 @@ public class HtmlRenderContext extends RenderContext<String> {
                 globalCursor.pop();
                 globalCursor.push();
                 XWPFParagraph paragraph = newParagraph(container, globalCursor);
+                unmarkDedupe();
                 RenderUtils.paragraphStyle(this, paragraph, CSSStyleUtils.EMPTY_STYLE);
             }
         }

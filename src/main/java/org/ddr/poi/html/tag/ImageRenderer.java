@@ -16,17 +16,26 @@
 
 package org.ddr.poi.html.tag;
 
-import org.apache.commons.io.FilenameUtils;
+import com.drew.imaging.FileType;
+import com.drew.imaging.FileTypeDetector;
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.imaging.ImageProcessingException;
+import com.drew.metadata.Metadata;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
 import org.apache.poi.util.Units;
-import org.apache.poi.xwpf.usermodel.Document;
 import org.apache.poi.xwpf.usermodel.SVGPictureData;
+import org.ddr.image.ImageInfo;
+import org.ddr.image.ImageType;
+import org.ddr.image.MetadataReader;
+import org.ddr.image.MetadataReaders;
 import org.ddr.poi.html.ElementRenderer;
 import org.ddr.poi.html.HtmlConstants;
 import org.ddr.poi.html.HtmlRenderContext;
+import org.ddr.poi.html.util.CSSLength;
+import org.ddr.poi.math.MathMLUtils;
 import org.ddr.poi.util.ByteArrayCopyStream;
 import org.ddr.poi.util.HttpURLConnectionUtils;
 import org.jsoup.nodes.Element;
@@ -34,13 +43,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Map;
 
 /**
@@ -55,8 +70,10 @@ public class ImageRenderer implements ElementRenderer {
     private static final String[] TAGS = {HtmlConstants.TAG_IMG};
     private static final String HTTP = "http";
     private static final String DOUBLE_SLASH = "//";
-    private static final String BASE64_PREFIX = "data:";
+    private static final String DATA_PREFIX = "data:";
     private static final Map<String, ImageType> PICTURE_TYPES = new HashMap<>(ImageType.values().length);
+    private static final String COMMENT_MATH_PREFIX = "<!--MathML: <math ";
+    private static final String COMMENT_MATH_SUFFIX = "</math>-->";
 
     static {
         for (ImageType type : ImageType.values()) {
@@ -64,36 +81,6 @@ public class ImageRenderer implements ElementRenderer {
         }
 
         SVGPictureData.initRelation();
-    }
-
-    enum ImageType {
-        EMF(Document.PICTURE_TYPE_EMF),
-        WMF(Document.PICTURE_TYPE_WMF),
-        PICT(Document.PICTURE_TYPE_PICT),
-        JPEG(Document.PICTURE_TYPE_JPEG),
-        JPG(Document.PICTURE_TYPE_JPEG),
-        PNG(Document.PICTURE_TYPE_PNG),
-        DIB(Document.PICTURE_TYPE_DIB),
-        GIF(Document.PICTURE_TYPE_GIF),
-        TIF(Document.PICTURE_TYPE_TIFF),
-        TIFF(Document.PICTURE_TYPE_TIFF),
-        EPS(Document.PICTURE_TYPE_EPS),
-        BMP(Document.PICTURE_TYPE_BMP),
-        WPG(Document.PICTURE_TYPE_WPG);
-
-        private final int type;
-
-        ImageType(int type) {
-            this.type = type;
-        }
-
-        public String getExtension() {
-            return name().toLowerCase();
-        }
-
-        public int getType() {
-            return type;
-        }
     }
 
     /**
@@ -110,23 +97,24 @@ public class ImageRenderer implements ElementRenderer {
         } else if (StringUtils.startsWith(src, DOUBLE_SLASH)) {
             // 某些图片链接为了跟随网站协议而隐去了协议名称
             handleRemoteImage(element, context, HTTP + HtmlConstants.COLON + src);
-        } else if (StringUtils.startsWith(src, BASE64_PREFIX)) {
-            handleBase64(element, context, src);
+        } else if (StringUtils.startsWith(src, DATA_PREFIX)) {
+            handleData(element, context, src);
         }
         return false;
     }
 
     /**
-     * 处理base64图片
+     * 处理Data URL
      *
      * @param element HTML元素
      * @param context 渲染上下文
-     * @param src 图片base64数据
+     * @param src 数据
      */
-    private void handleBase64(Element element, HtmlRenderContext context, String src) {
+    private void handleData(Element element, HtmlRenderContext context, String src) {
         int index = src.indexOf(HtmlConstants.COMMA.charAt(0));
         String data = src.substring(index + 1);
-        String format = StringUtils.substringBetween(src.substring(0, index), HtmlConstants.SLASH, HtmlConstants.SEMICOLON);
+        String declaration = src.substring(0, index);
+        String format = StringUtils.substringBetween(declaration, HtmlConstants.SLASH, HtmlConstants.SEMICOLON);
         // org.apache.poi.sl.usermodel.PictureData.PictureType
         if (format.contains(HtmlConstants.MINUS)) {
             format = StringUtils.substringAfterLast(format, HtmlConstants.MINUS);
@@ -135,25 +123,48 @@ public class ImageRenderer implements ElementRenderer {
         }
 
         byte[] bytes;
-        try {
-            bytes = Base64.getDecoder().decode(data);
-        } catch (Exception e) {
-            log.warn("Failed to load image due to illegal base64 data: {}", src);
-            return;
-        }
-        BufferedImage image;
-        try (InputStream inputStream = new ByteArrayInputStream(bytes)) {
-            image = ImageIO.read(inputStream);
-            inputStream.reset();
+        if (declaration.contains("base64")) {
+            try {
+                bytes = Base64.getDecoder().decode(data);
+            } catch (Exception e) {
+                log.warn("Failed to load image due to illegal base64 data: {}", src);
+                return;
+            }
+        } else {
+            if (data.startsWith(HtmlConstants.PERCENT)) {
+                try {
+                    data = URLDecoder.decode(data, StandardCharsets.UTF_8.name());
+                } catch (UnsupportedEncodingException e) {
+                    log.warn("Failed to load image due to illegal data url: {}", src);
+                    return;
+                }
+            }
 
-            int type = PICTURE_TYPES.getOrDefault(format, typeOf(image)).getType();
-            boolean svg = HtmlConstants.TAG_SVG.equals(format);
-            addPicture(element, context, inputStream, type, image.getWidth(), image.getHeight(), svg ? bytes : null);
+            // wiris support
+            int startOfMath = data.indexOf(COMMENT_MATH_PREFIX);
+            if (startOfMath >= 0) {
+                try {
+                    int endOfMath = data.indexOf(COMMENT_MATH_SUFFIX, startOfMath + COMMENT_MATH_PREFIX.length());
+                    String math = data.substring(startOfMath + 12, endOfMath + 7);
+                    MathMLUtils.renderTo(context.getClosestParagraph(), context.newRun(), math);
+                    return;
+                } catch (Exception e) {
+                    log.warn("Failed to render math in wiris svg, will try to render as svg image: {}", data, e);
+                }
+            }
+
+            bytes = data.getBytes(StandardCharsets.UTF_8);
+        }
+        boolean svg = HtmlConstants.TAG_SVG.equals(format);
+        try (ByteArrayInputStream inputStream = new ByteArrayInputStream(bytes)) {
+            ImageInfo info = analyzeImage(inputStream, svg);
+            if (info == null) {
+                log.warn("Illegal image url: {}", src);
+                return;
+            }
+            addPicture(element, context, info.getStream(), info.getRawType(), info.getWidth(), info.getHeight(), svg ? bytes : null);
         } catch (IOException | InvalidFormatException e) {
             log.warn("Failed to load image: {}", src, e);
-        } finally {
-            // 释放资源
-            image = null;
         }
     }
 
@@ -175,50 +186,87 @@ public class ImageRenderer implements ElementRenderer {
      * @param src 图片链接地址
      */
     private void handleRemoteImage(Element element, HtmlRenderContext context, String src) {
-        String extension = FilenameUtils.getExtension(StringUtils.substringBefore(src, HtmlConstants.QUESTION)).toLowerCase();
-        ImageType type = PICTURE_TYPES.get(extension);
-
-        ByteArrayCopyStream outputStream = null;
-        InputStream inputStream = null;
         HttpURLConnection connect = null;
-        BufferedImage image;
         try {
             connect = HttpURLConnectionUtils.connect(src);
             InputStream urlStream = connect.getInputStream();
-            boolean svg = connect.getHeaderField("content-type").contains(HtmlConstants.TAG_SVG);
-            byte[] svgData = null;
-            if (svg) {
-                outputStream = new ByteArrayCopyStream(urlStream.available());
-                IOUtils.copy(urlStream, outputStream);
-                svgData = outputStream.toByteArray();
-                image = ImageIO.read(outputStream.toInput());
-            } else {
-                image = ImageIO.read(urlStream);
-            }
+            boolean svg = StringUtils.contains(connect.getHeaderField("content-type"), HtmlConstants.TAG_SVG);
+            ByteArrayCopyStream outputStream = new ByteArrayCopyStream(urlStream.available());
+            IOUtils.copy(urlStream, outputStream);
+            final byte[] svgData = svg ? outputStream.toByteArray() : null;
 
-            if (image == null) {
+            ByteArrayInputStream inputStream = outputStream.toInput();
+            ImageInfo info = analyzeImage(inputStream, svg);
+            if (info == null) {
                 log.warn("Illegal image url: {}", src);
                 return;
             }
-            int size = image.getData().getDataBuffer().getSize();
-            outputStream = new ByteArrayCopyStream(size);
 
-            if (type == null) {
-                type = typeOf(image);
-            }
-
-            ImageIO.write(image, type.getExtension(), outputStream);
-            inputStream = outputStream.toInput();
-            addPicture(element, context, inputStream, type.getType(), image.getWidth(), image.getHeight(), svgData);
+            addPicture(element, context, info.getStream(), info.getRawType(), info.getWidth(), info.getHeight(), svgData);
         } catch (IOException | InvalidFormatException e) {
             log.warn("Failed to load image: {}", src, e);
         } finally {
             IOUtils.close(connect);
-            IOUtils.closeQuietly(outputStream);
-            IOUtils.closeQuietly(inputStream);
-            // 释放资源
-            image = null;
         }
+    }
+
+    private ImageInfo analyzeImage(ByteArrayInputStream inputStream, boolean svg) throws IOException, InvalidFormatException {
+        final long length = inputStream.available();
+        // actual image data stream
+        ByteArrayInputStream stream = inputStream;
+        ImageType type = null;
+        Dimension dimension = null;
+
+        if (svg) {
+            BufferedImage image = ImageIO.read(inputStream);
+            inputStream.reset();
+
+            type = typeOf(image);
+            ByteArrayCopyStream imageStream = new ByteArrayCopyStream(image.getData().getDataBuffer().getSize());
+            ImageIO.write(image, type.getExtension(), imageStream);
+            stream = imageStream.toInput();
+
+            dimension = new Dimension(image.getWidth(), image.getHeight());
+        } else {
+            FileType fileType = FileTypeDetector.detectFileType(inputStream);
+            for (MetadataReader metadataReader : MetadataReaders.INSTANCES) {
+                if (metadataReader.canRead(fileType)) {
+                    try {
+                        Metadata metadata = ImageMetadataReader.readMetadata(inputStream, length, fileType);
+                        type = metadataReader.getType(metadata);
+                        dimension = metadataReader.getDimension(metadata);
+                        break;
+                    } catch (ImageProcessingException ignored) {
+                    }
+                }
+            }
+            inputStream.reset();
+            if (dimension == null) {
+                Iterator<ImageReader> imageReaders = ImageIO.getImageReaders(inputStream);
+                while (imageReaders.hasNext()) {
+                    ImageReader reader = imageReaders.next();
+                    try {
+                        dimension = new Dimension(reader.getWidth(0), reader.getHeight(0));
+                        break;
+                    } catch (IOException ignored) {
+                    }
+                }
+                if (dimension == null) {
+                    BufferedImage image = ImageIO.read(inputStream);
+                    inputStream.reset();
+
+                    if (image == null) {
+                        return null;
+                    }
+
+                    if (type == null) {
+                        type = typeOf(image);
+                    }
+                    dimension = new Dimension(image.getWidth(), image.getHeight());
+                }
+            }
+        }
+        return new ImageInfo(stream, type, dimension);
     }
 
     @Override
@@ -251,53 +299,84 @@ public class ImageRenderer implements ElementRenderer {
         // 图片原始宽高
         int widthInEMU = Units.pixelToEMU(widthInPixels);
         int heightInEMU = Units.pixelToEMU(heightInPixels);
+        float naturalAspect = 1f * widthInEMU / heightInEMU;
 
-        boolean declaredWidth = false;
-        boolean declaredHeight = false;
+        int declaredWidth = widthInEMU;
+        int declaredHeight = heightInEMU;
+        int maxWidthInEMU = containerWidth;
+        int maxHeightInEMU = Integer.MAX_VALUE;
 
         String width = context.getPropertyValue(HtmlConstants.CSS_WIDTH);
         if (width.length() > 0) {
-            declaredWidth = true;
+            CSSLength cssLength = CSSLength.of(width);
+            if (cssLength.isValid()) {
+                declaredWidth = context.computeLengthInEMU(cssLength, widthInEMU, containerWidth);
+            }
         } else {
             // width attribute is overridden by style, the same to height
             // https://css-tricks.com/whats-the-difference-between-width-height-in-css-and-width-height-html-attributes/
             width = element.attr(HtmlConstants.ATTR_WIDTH);
             if (NumberUtils.isParsable(width)) {
                 width += HtmlConstants.PX;
-                declaredWidth = true;
+                CSSLength cssLength = CSSLength.of(width);
+                declaredWidth = context.computeLengthInEMU(cssLength, widthInEMU, containerWidth);
             }
         }
 
+
         String maxWidth = context.getPropertyValue(HtmlConstants.CSS_MAX_WIDTH);
-        widthInEMU = context.computeLengthInEMU(width, maxWidth, widthInEMU, containerWidth);
+        if (maxWidth.length() > 0) {
+            CSSLength cssLength = CSSLength.of(maxWidth);
+            if (cssLength.isValid()) {
+                // restrained by container
+                maxWidthInEMU = Math.min(context.computeLengthInEMU(cssLength, widthInEMU, containerWidth), containerWidth);
+            }
+        }
 
         String height = context.getPropertyValue(HtmlConstants.CSS_HEIGHT);
         if (height.length() > 0) {
-            declaredHeight = true;
+            CSSLength cssLength = CSSLength.of(height);
+            if (cssLength.isValid()) {
+                declaredHeight = context.computeLengthInEMU(cssLength, heightInEMU, Integer.MAX_VALUE);
+            }
         } else {
             height = element.attr(HtmlConstants.ATTR_HEIGHT);
             if (NumberUtils.isParsable(height)) {
                 height += HtmlConstants.PX;
-                declaredHeight = true;
+                CSSLength cssLength = CSSLength.of(height);
+                declaredHeight = context.computeLengthInEMU(cssLength, heightInEMU, Integer.MAX_VALUE);
             }
         }
 
         String maxHeight = context.getPropertyValue(HtmlConstants.CSS_MAX_HEIGHT);
-        heightInEMU = context.computeLengthInEMU(height, maxHeight, heightInEMU, Integer.MAX_VALUE);
-
-        // 除非同时声明了宽和高，否则同比计算对应尺寸
-        if (!declaredHeight) {
-            heightInEMU = (int) (heightInPixels * (long) widthInEMU / widthInPixels);
-        } else if (!declaredWidth) {
-            widthInEMU = (int) (widthInPixels * (long) heightInEMU / heightInPixels);
-            if (widthInEMU > containerWidth) {
-                widthInEMU = containerWidth;
-                heightInEMU = (int) (heightInPixels * (long) widthInEMU / widthInPixels);
+        if (maxHeight.length() > 0) {
+            CSSLength cssLength = CSSLength.of(maxHeight);
+            if (cssLength.isValid()) {
+                maxHeightInEMU = context.computeLengthInEMU(cssLength, heightInEMU, Integer.MAX_VALUE);
             }
         }
 
+        // 计算尺寸
+        int calculatedWidth, calculatedHeight;
+        if (declaredWidth < maxWidthInEMU && declaredHeight <= maxHeightInEMU) {
+            calculatedWidth = declaredWidth;
+            calculatedHeight = declaredHeight;
+        } else if (declaredWidth > maxWidthInEMU && declaredHeight <= maxHeightInEMU) {
+            calculatedWidth = maxWidthInEMU;
+            calculatedHeight = (int) (maxWidthInEMU / naturalAspect);
+        } else if (declaredHeight > maxHeightInEMU && declaredWidth <= maxWidthInEMU) {
+            calculatedHeight = maxHeightInEMU;
+            calculatedWidth = (int) (maxHeightInEMU * naturalAspect);
+        } else {
+            float widthRatio = 1f * maxWidthInEMU / declaredWidth;
+            float heightRatio = 1f * maxHeightInEMU / declaredHeight;
+            float scale = Math.min(widthRatio, heightRatio);
+            calculatedWidth = (int) (declaredWidth * scale);
+            calculatedHeight = (int) (declaredHeight * scale);
+        }
+
         context.renderPicture(inputStream, type, HtmlConstants.TAG_IMG,
-                widthInEMU, heightInEMU, svgData);
+            calculatedWidth, calculatedHeight, svgData);
     }
 
 }

@@ -1,6 +1,7 @@
 package org.ddr.poi.html.tag;
 
 import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
+import org.ddr.image.ImageType;
 import org.ddr.poi.html.HtmlConstants;
 import org.ddr.poi.html.HtmlRenderContext;
 import org.ddr.poi.util.ByteArrayCopyStream;
@@ -35,6 +36,9 @@ public class SvgRenderer extends ImageRenderer {
      */
     @Override
     public boolean renderStart(Element element, HtmlRenderContext context) {
+        if (!element.hasAttr("xmlns")) {
+            element.attr("xmlns", "http://www.w3.org/2000/svg");
+        }
         String svg = element.outerHtml().replace(" />", "/>");
         byte[] bytes = svg.getBytes(StandardCharsets.UTF_8);
         BufferedImage image;

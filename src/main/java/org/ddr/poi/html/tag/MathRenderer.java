@@ -20,6 +20,8 @@ import org.ddr.poi.html.ElementRenderer;
 import org.ddr.poi.html.HtmlConstants;
 import org.ddr.poi.html.HtmlRenderContext;
 import org.ddr.poi.math.MathMLUtils;
+import org.jsoup.nodes.Document.OutputSettings;
+import org.jsoup.nodes.Document.OutputSettings.Syntax;
 import org.jsoup.nodes.Element;
 
 /**
@@ -40,9 +42,12 @@ public class MathRenderer implements ElementRenderer {
      */
     @Override
     public boolean renderStart(Element element, HtmlRenderContext context) {
+        OutputSettings outputSettings = element.ownerDocument().outputSettings();
+        outputSettings.syntax(Syntax.xml);
         String math = element.outerHtml();
-
-        MathMLUtils.renderTo(context.getClosestParagraph(), null, math);
+        outputSettings.syntax(Syntax.html);
+        math = MathMLUtils.normalize(math);
+        MathMLUtils.renderTo(context.getClosestParagraph(), context.newRun(), math);
 
         return false;
     }

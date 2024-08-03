@@ -112,7 +112,8 @@ public class NumberingContext {
      */
     public void add(XWPFParagraph paragraph) {
         if (numberingParagraphs == null) {
-            throw new IllegalStateException("Call startLevel method first");
+            // startLevel method not called, fallback as <div> or <p>
+            return;
         }
         paragraph.setNumILvl(BigInteger.valueOf(nextNumberingLevel - 1));
         numberingParagraphs.add(paragraph);
@@ -213,4 +214,7 @@ public class NumberingContext {
         this.spacing = spacing;
     }
 
+    public boolean contains(XWPFParagraph paragraph) {
+        return numberingParagraphs != null && numberingParagraphs.contains(paragraph);
+    }
 }
