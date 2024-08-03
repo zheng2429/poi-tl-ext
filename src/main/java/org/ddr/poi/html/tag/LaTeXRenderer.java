@@ -16,34 +16,22 @@
 
 package org.ddr.poi.html.tag;
 
+import org.apache.commons.lang3.StringUtils;
 import org.ddr.poi.html.ElementRenderer;
 import org.ddr.poi.html.HtmlConstants;
 import org.ddr.poi.html.HtmlRenderContext;
-import org.ddr.poi.html.util.RenderUtils;
+import org.ddr.poi.latex.LaTeXUtils;
 import org.jsoup.nodes.Element;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTBorder;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTP;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTPBdr;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.STBorder;
-
-import java.math.BigInteger;
+import uk.ac.ed.ph.snuggletex.SnuggleSession;
 
 /**
- * hr标签渲染器
+ * latex标签渲染器（自定义）
  *
  * @author Draco
- * @since 2021-02-18
+ * @since 2023-07-17
  */
-public class HeaderBreakRenderer implements ElementRenderer {
-    private static final String[] TAGS = {HtmlConstants.TAG_HR};
-    /**
-     * 线粗细，相当于3px
-     */
-    private static final BigInteger SIZE = BigInteger.valueOf(6);
-    /**
-     * 间距
-     */
-    private static final BigInteger SPACE = BigInteger.ONE;
+public class LaTeXRenderer implements ElementRenderer {
+    private static final String[] TAGS = {HtmlConstants.TAG_LATEX};
 
     /**
      * 开始渲染
@@ -54,17 +42,15 @@ public class HeaderBreakRenderer implements ElementRenderer {
      */
     @Override
     public boolean renderStart(Element element, HtmlRenderContext context) {
-        CTP ctp = context.getClosestParagraph().getCTP();
-        CTPBdr pBdr = RenderUtils.getPBdr(RenderUtils.getPPr(ctp));
-        CTBorder ctBorder = pBdr.addNewBottom();
-        ctBorder.setVal(STBorder.SINGLE);
-        ctBorder.setSz(SIZE);
-        ctBorder.setSpace(SPACE);
+        String latex = element.wholeText();
+        if (StringUtils.isBlank(latex)) {
+            return false;
+        }
 
-        ctBorder = pBdr.addNewBetween();
-        ctBorder.setVal(STBorder.SINGLE);
-        ctBorder.setSz(SIZE);
-        ctBorder.setSpace(SPACE);
+        SnuggleSession session = LaTeXUtils.createSession();
+        LaTeXUtils.parse(session, latex);
+        LaTeXUtils.renderTo(context.getClosestParagraph(), null, session);
+
         return false;
     }
 
@@ -75,6 +61,7 @@ public class HeaderBreakRenderer implements ElementRenderer {
 
     @Override
     public boolean renderAsBlock() {
-        return true;
+        return false;
     }
+
 }

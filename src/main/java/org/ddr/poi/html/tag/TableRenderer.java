@@ -35,6 +35,7 @@ import org.ddr.poi.html.util.JsoupUtils;
 import org.ddr.poi.html.util.RenderUtils;
 import org.ddr.poi.html.util.Span;
 import org.ddr.poi.html.util.SpanWidth;
+import org.ddr.poi.html.util.WhiteSpaceRule;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
 import org.jsoup.select.Elements;
@@ -52,6 +53,7 @@ import org.openxmlformats.schemas.wordprocessingml.x2006.main.STTblWidth;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -89,6 +91,12 @@ public class TableRenderer implements ElementRenderer {
     @Override
     public boolean renderStart(Element element, HtmlRenderContext context) {
         CSSStyleDeclarationImpl styleDeclaration = context.currentElementStyle();
+
+        WhiteSpaceRule tableWhiteSpace = WhiteSpaceRule.of(styleDeclaration.getWhiteSpace(), WhiteSpaceRule.NORMAL);
+        styleDeclaration.setWhiteSpace(HtmlConstants.NORMAL);
+        Map<Element, WhiteSpaceRule> whiteSpaceMap = new HashMap<>();
+        whiteSpaceMap.put(element, tableWhiteSpace);
+
         String widthDeclaration = styleDeclaration.getWidth();
 
         XWPFTable table = context.getClosestTable();
@@ -101,7 +109,7 @@ public class TableRenderer implements ElementRenderer {
 
         Element caption = JsoupUtils.firstChild(element, HtmlConstants.TAG_CAPTION);
         if (caption != null) {
-            renderCaption(context, table, caption);
+            renderCaption(context, table, caption, tableWhiteSpace);
         }
 
         Element colgroup = JsoupUtils.firstChild(element, HtmlConstants.TAG_COLGROUP);
@@ -125,6 +133,50 @@ public class TableRenderer implements ElementRenderer {
                 int colspan = NumberUtils.toInt(td.attr(HtmlConstants.ATTR_COLSPAN), 1);
                 minRowSpan = Math.min(minRowSpan, rowspan);
 
+                for (Map.Entry<Integer, Span> entry : rowSpanMap.entrySet()) {
+                    if (entry.getKey() <= columnIndex && entry.getValue().isEnabled()) {
+                        columnIndex += entry.getValue().getColumn();
+                        entry.getValue().setEnabled(false);
+                        // 合并行也需要生成单元格
+                        addVMergeCell(row, c, entry.getValue());
+                        vMergeCount++;
+                    }
+                }
+                // 标记行列索引，便于渲染单元格时获取容器
+                td.attr(HtmlConstants.ATTR_ROW_INDEX, String.valueOf(r));
+                td.attr(HtmlConstants.ATTR_COLUMN_INDEX, String.valueOf(c + vMergeCount));
+
+                WhiteSpaceRule tdWhiteSpace = null;
+                Element parent = td.parent();
+                while (true) {
+                    if (parent == element) {
+                        if (tdWhiteSpace == null) {
+                            tdWhiteSpace = tableWhiteSpace;
+                        }
+                        break;
+                    }
+                    WhiteSpaceRule parentWhiteSpace = whiteSpaceMap.get(parent);
+                    if (!whiteSpaceMap.containsKey(parent)) {
+                        CSSStyleDeclarationImpl parentStyle = context.getCssStyleDeclaration(parent);
+                        String parentRule = parentStyle.removeProperty(HtmlConstants.CSS_WHITE_SPACE);
+                        parentWhiteSpace = WhiteSpaceRule.of(parentRule);
+                        whiteSpaceMap.put(parent, parentWhiteSpace);
+                        if (parentWhiteSpace != null) {
+                            parent.attr(HtmlConstants.ATTR_STYLE, parentStyle.getCssText());
+                        }
+                    }
+                    if (parentWhiteSpace != null && tdWhiteSpace == null) {
+                        tdWhiteSpace = parentWhiteSpace;
+                    }
+                    parent = parent.parent();
+                }
+
+                if (!tdWhiteSpace.isNormal()) {
+                    td.attr(HtmlConstants.ATTR_STYLE, HtmlConstants.CSS_WHITE_SPACE
+                            + HtmlConstants.COLON + tdWhiteSpace.getValue() + HtmlConstants.SEMICOLON
+                            + td.attr(HtmlConstants.ATTR_STYLE));
+                }
+
                 // 列定义的样式与单元格的样式合并
                 if (!columnStyles.isEmpty() && columnIndex < columnStyles.size()) {
                     String colStyle = columnStyles.get(columnIndex).getStyle().getCssText();
@@ -145,20 +197,8 @@ public class TableRenderer implements ElementRenderer {
                     }
                 }
 
-                CSSStyleDeclarationImpl tdStyleDeclaration = CSSStyleUtils.parseNew(td.attr(HtmlConstants.ATTR_STYLE));
+                CSSStyleDeclarationImpl tdStyleDeclaration = CSSStyleUtils.parse(td.attr(HtmlConstants.ATTR_STYLE));
                 CSSLength tdWidth = CSSLength.of(tdStyleDeclaration.getWidth());
-                for (Map.Entry<Integer, Span> entry : rowSpanMap.entrySet()) {
-                    if (entry.getKey() <= columnIndex && entry.getValue().isEnabled()) {
-                        columnIndex += entry.getValue().getColumn();
-                        entry.getValue().setEnabled(false);
-                        // 合并行也需要生成单元格
-                        addVMergeCell(row, c, entry.getValue());
-                        vMergeCount++;
-                    }
-                }
-                // 标记行列索引，便于渲染单元格时获取容器
-                td.attr(HtmlConstants.ATTR_ROW_INDEX, String.valueOf(r));
-                td.attr(HtmlConstants.ATTR_COLUMN_INDEX, String.valueOf(c + vMergeCount));
 
                 // 必须晚于之前列的行合并单元格创建
                 XWPFTableCell cell = createCell(row, c);
@@ -195,14 +235,17 @@ public class TableRenderer implements ElementRenderer {
 
             for (Iterator<Map.Entry<Integer, Span>> iterator = rowSpanMap.entrySet().iterator(); iterator.hasNext(); ) {
                 Map.Entry<Integer, Span> entry = iterator.next();
-                entry.getValue().setRow(entry.getValue().getRow() - minRowSpan);
-                if (entry.getValue().getRow() == 0) {
+                Integer spanColumnIndex = entry.getKey();
+                Span span = entry.getValue();
+                span.setRow(span.getRow() - minRowSpan);
+                if (span.getRow() == 0) {
                     iterator.remove();
                 } else {
-                    entry.getValue().setEnabled(true);
+                    span.setEnabled(true);
                 }
-                if (columnIndex < colWidthMap.size()) {
-                    addVMergeCell(row, columnIndex++, entry.getValue());
+                if (columnIndex <= spanColumnIndex && columnIndex < colWidthMap.size()) {
+                    addVMergeCell(row, columnIndex, span);
+                    columnIndex += span.getColumn();
                 }
             }
         }
@@ -351,13 +394,13 @@ public class TableRenderer implements ElementRenderer {
      * @param context 渲染上下文
      * @param table 表格
      * @param caption 标题元素
+     * @param whiteSpace table标签上的white-space样式
      */
-    private void renderCaption(HtmlRenderContext context, XWPFTable table, Element caption) {
+    private void renderCaption(HtmlRenderContext context, XWPFTable table, Element caption, WhiteSpaceRule whiteSpace) {
         CSSStyleDeclarationImpl captionStyle = context.getCssStyleDeclaration(caption);
-        if (CSSStyleUtils.EMPTY_STYLE == captionStyle) {
-            captionStyle = defaultCaptionStyle;
-        } else {
-            captionStyle.getProperties().addAll(0, defaultCaptionStyle.getProperties());
+        captionStyle.getProperties().addAll(0, defaultCaptionStyle.getProperties());
+        if (whiteSpace != null) {
+            captionStyle.getProperties().add(0, CSSStyleUtils.newProperty(HtmlConstants.CSS_WHITE_SPACE, whiteSpace.getValue()));
         }
         context.pushInlineStyle(captionStyle, caption.isBlock());
         XWPFParagraph captionParagraph;

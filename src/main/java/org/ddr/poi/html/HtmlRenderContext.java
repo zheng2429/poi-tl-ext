@@ -230,6 +230,11 @@ public class HtmlRenderContext extends RenderContext<String> {
     private XWPFParagraph dedupeParagraph;
 
     /**
+     * 同一段落内的前一个文本节点
+     */
+    private TextWrapper previousText;
+
+    /**
      * 构造方法
      *
      * @param context 原始渲染上下文
@@ -387,7 +392,7 @@ public class HtmlRenderContext extends RenderContext<String> {
             XWPFParagraph paragraph = getClosestParagraph();
             currentRun = paragraph.createHyperlinkRun(uri);
             if (dedupeParagraph == paragraph) {
-                dedupeParagraph = null;
+                unmarkDedupe();
             }
         } else {
             // 在占位符之前插入超链接
@@ -397,6 +402,7 @@ public class HtmlRenderContext extends RenderContext<String> {
             xmlCursor.insertElement(HYPERLINK_QNAME);
             xmlCursor.toPrevSibling();
             CTHyperlink ctHyperlink = (CTHyperlink) xmlCursor.getObject();
+            xmlCursor.dispose();
             ctHyperlink.setId(rId);
             ctHyperlink.addNewR();
             currentRun = new XWPFHyperlinkRun(ctHyperlink, ctHyperlink.getRArray(0), getRun().getParent());
@@ -425,6 +431,8 @@ public class HtmlRenderContext extends RenderContext<String> {
         if (placeholderStyleId != null) {
             xwpfParagraph.setStyle(placeholderStyleId);
         }
+        markDedupe(xwpfParagraph);
+        previousText = null;
         return xwpfParagraph;
     }
 
@@ -439,12 +447,12 @@ public class HtmlRenderContext extends RenderContext<String> {
             XmlCursor xmlCursor = currentRun.getCTR().newCursor();
             CTR ctr;
             if (xmlCursor.toFirstChild()) {
-                xmlCursor.dispose();
                 ctr = ((XWPFHyperlinkRun) currentRun).getCTHyperlink().addNewR();
             } else {
                 // run没有内容则直接复用
                 ctr = currentRun.getCTR();
             }
+            xmlCursor.dispose();
             // 默认链接样式
             initHyperlinkStyle(ctr);
 
@@ -455,7 +463,7 @@ public class HtmlRenderContext extends RenderContext<String> {
             XWPFParagraph paragraph = getClosestParagraph();
             currentRun = paragraph.createRun();
             if (dedupeParagraph == paragraph) {
-                dedupeParagraph = null;
+                unmarkDedupe();
             }
         } else {
             // 在占位符之前插入run
@@ -463,6 +471,7 @@ public class HtmlRenderContext extends RenderContext<String> {
             xmlCursor.insertElement(R_QNAME);
             xmlCursor.toPrevSibling();
             CTR ctr = (CTR) xmlCursor.getObject();
+            xmlCursor.dispose();
             currentRun = new XWPFRun(ctr, getRun().getParent());
         }
         return currentRun.getCTR();
@@ -725,12 +734,10 @@ public class HtmlRenderContext extends RenderContext<String> {
      */
     public void renderText(String text) {
         String whiteSpace = getPropertyValue(HtmlConstants.CSS_WHITE_SPACE);
-        WhiteSpaceRule rule = WhiteSpaceRule.of(whiteSpace);
-        CTR ctr = newRun();
+        WhiteSpaceRule rule = WhiteSpaceRule.of(whiteSpace, WhiteSpaceRule.NORMAL);
 
         StringBuilder sb = StringUtil.borrowBuilder();
         boolean mergeWhitespace = false;
-        boolean reachedNonWhite = false;
 
         // https://en.wikipedia.org/wiki/List_of_XML_and_HTML_character_entity_references
         int len = text.length();
@@ -770,6 +777,11 @@ public class HtmlRenderContext extends RenderContext<String> {
                 }
             }
         }
+        if (len == 0) {
+            return;
+        }
+        boolean endTrimmed = len < text.length();
+        CTR ctr = newRun();
 
         for (int i = 0; i < len; i += Character.charCount(c)) {
             c = text.codePointAt(i);
@@ -779,7 +791,7 @@ public class HtmlRenderContext extends RenderContext<String> {
                         continue;
                     }
                     if (rule.isKeepLineBreak()) {
-                        addText(ctr, sb);
+                        addText(ctr, sb, false);
                         ctr.addNewCr();
                     } else {
                         mergeWhitespace = true;
@@ -787,28 +799,30 @@ public class HtmlRenderContext extends RenderContext<String> {
                     break;
                 case '\n':
                     if (rule.isKeepLineBreak()) {
-                        addText(ctr, sb);
+                        addText(ctr, sb, false);
                         ctr.addNewBr();
                     } else {
                         mergeWhitespace = true;
                     }
                     break;
                 case ' ':
-                    if (reachedNonWhite || rule.isKeepSpaceAndTab()) {
+                    if (rule.isKeepSpaceAndTab()) {
                         sb.appendCodePoint(c);
                     } else {
                         mergeWhitespace = true;
                     }
                     break;
                 case '\t':
-                    if (reachedNonWhite || rule.isKeepSpaceAndTab()) {
-                        addText(ctr, sb);
+                    if (rule.isKeepSpaceAndTab()) {
+                        addText(ctr, sb, false);
                         ctr.addNewTab();
                     } else {
                         mergeWhitespace = true;
                     }
                     break;
                 case 160: // nbsp
+                case 8192: // enquad
+                case 8193: // emquad
                 case 8194: // ensp
                 case 8195: // emsp
                 case 8196: // emsp13
@@ -817,9 +831,13 @@ public class HtmlRenderContext extends RenderContext<String> {
                 case 8200: // puncsp
                 case 8201: // thinsp
                 case 8202: // hairsp
+                case 8239: // narrow space
                 case 8287: // medium space
+                    if (mergeWhitespace) {
+                        sb.append(' ');
+                        mergeWhitespace = false;
+                    }
                     sb.append(' ');
-                    mergeWhitespace = false;
                     break;
                 case 173: // soft hyphen
                 case 8203: // zero width space
@@ -837,18 +855,21 @@ public class HtmlRenderContext extends RenderContext<String> {
                         continue;
                     }
                     if (mergeWhitespace) {
-                        if (reachedNonWhite) {
-                            sb.append(' ');
-                        }
+                        sb.append(' ');
                         mergeWhitespace = false;
                     }
                     sb.appendCodePoint(c);
-                    reachedNonWhite = true;
+                    if (previousText != null && previousText.isEndTrimmed()) {
+                        CTText previous = previousText.getText();
+                        previous.setStringValue(previous.getStringValue() + ' ');
+                        previous.setSpace(SpaceAttribute.Space.PRESERVE);
+                        previousText = null;
+                    }
                     break;
             }
         }
 
-        addText(ctr, sb);
+        addText(ctr, sb, endTrimmed);
         StringUtil.releaseBuilder(sb);
 
         // 应用样式
@@ -859,7 +880,7 @@ public class HtmlRenderContext extends RenderContext<String> {
         }
     }
 
-    private void addText(CTR ctr, StringBuilder sb) {
+    private void addText(CTR ctr, StringBuilder sb, boolean endTrimmed) {
         if (sb.length() > 0) {
             CTText ctText = ctr.addNewT();
             String text = sb.toString();
@@ -868,6 +889,7 @@ public class HtmlRenderContext extends RenderContext<String> {
                 ctText.setSpace(SpaceAttribute.Space.PRESERVE);
             }
             sb.delete(0, sb.length());
+            previousText = new TextWrapper(ctText, endTrimmed);
         }
     }
 
@@ -1216,7 +1238,7 @@ public class HtmlRenderContext extends RenderContext<String> {
         if (log.isDebugEnabled()) {
             log.info("Start rendering html tag: <{}{}>", element.normalName(), element.attributes());
         }
-        if (element.tag().isFormListed()) {
+        if (element.tag().isFormListed() || element.tag().isFormSubmittable()) {
             return;
         }
 
@@ -1232,6 +1254,7 @@ public class HtmlRenderContext extends RenderContext<String> {
 
         if (renderAsBlock(element, elementRenderer)) {
             if (element.childNodeSize() == 0 && !HtmlConstants.KEEP_EMPTY_TAGS.contains(element.normalName())) {
+                popInlineStyle();
                 return;
             }
             if (!isBlocked()) {
@@ -1252,7 +1275,7 @@ public class HtmlRenderContext extends RenderContext<String> {
                 globalCursor.pop();
                 if (dedupeParagraph != null) {
                     removeParagraph(container, dedupeParagraph);
-                    dedupeParagraph = null;
+                    unmarkDedupe();
                 }
                 // 新增时会自动创建一行一列，会影响自定义的表格渲染逻辑，故删除
                 xwpfTable.removeRow(0);
@@ -1480,5 +1503,26 @@ public class HtmlRenderContext extends RenderContext<String> {
      */
     public void unmarkDedupe() {
         dedupeParagraph = null;
+    }
+
+    /**
+     * 文本封装类，用于空白字符折叠处理
+     */
+    private static class TextWrapper {
+        private final CTText text;
+        private final boolean endTrimmed;
+
+        public TextWrapper(CTText text, boolean endTrimmed) {
+            this.text = text;
+            this.endTrimmed = endTrimmed;
+        }
+
+        public CTText getText() {
+            return text;
+        }
+
+        public boolean isEndTrimmed() {
+            return endTrimmed;
+        }
     }
 }
