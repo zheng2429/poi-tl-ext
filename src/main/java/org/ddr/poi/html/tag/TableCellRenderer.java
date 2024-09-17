@@ -17,6 +17,7 @@
 package org.ddr.poi.html.tag;
 
 import com.steadystate.css.dom.CSSStyleDeclarationImpl;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFTable;
@@ -54,6 +55,15 @@ public class TableCellRenderer implements ElementRenderer {
         int column = NumberUtils.toInt(element.attr(HtmlConstants.ATTR_COLUMN_INDEX));
         XWPFTable table = context.getClosestTable();
         XWPFTableCell cell = table.getRow(row).getCell(column);
+        String width = element.attributes().get("width");
+        try {
+            if (StringUtils.isNotEmpty(width) && width.matches("^[0-9]+(.[0-9]+)?$")) {
+                long num = Math.round(Double.parseDouble(width) * 15.0D);
+                cell.setWidth(String.valueOf(num));
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         context.pushContainer(cell);
         XWPFParagraph paragraph = cell.getParagraphArray(0);
         XmlCursor newCursor = paragraph.getCTP().newCursor();

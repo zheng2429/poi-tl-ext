@@ -587,6 +587,9 @@ public class HtmlRenderContext extends RenderContext<String> {
                 }
             }
         }
+        String fontFamily = inlineStyle.getPropertyValue(HtmlConstants.CSS_FONT_FAMILY);
+        if (StringUtils.isNotBlank(fontFamily))
+            inlineStyle.setProperty(HtmlConstants.CSS_FONT_FAMILY, fontFamily.replace("\"", "").replace("'", ""), null);
 
         inlineStyles.push(new InlineStyle(inlineStyle, block));
     }
@@ -1237,7 +1240,9 @@ public class HtmlRenderContext extends RenderContext<String> {
             Element element = ((Element) node);
             renderElement(element);
         } else if (node instanceof TextNode) {
-            renderText(((TextNode) node).getWholeText());
+            String wholeText = ((TextNode)node).getWholeText();
+            if (StringUtils.isNotBlank(wholeText))
+                renderText(wholeText);
         }
     }
 
