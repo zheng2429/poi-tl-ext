@@ -17,6 +17,8 @@
 package org.ddr.poi.html.tag;
 
 import com.steadystate.css.dom.CSSStyleDeclarationImpl;
+import org.apache.commons.lang3.BooleanUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.poi.util.Units;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
@@ -38,16 +40,7 @@ import org.ddr.poi.html.util.SpanWidth;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
 import org.jsoup.select.Elements;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTRow;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTbl;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblGrid;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblGridCol;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTblWidth;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTc;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTTcPr;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTVMerge;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge;
-import org.openxmlformats.schemas.wordprocessingml.x2006.main.STTblWidth;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.*;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -92,6 +85,10 @@ public class TableRenderer implements ElementRenderer {
         String widthDeclaration = styleDeclaration.getWidth();
 
         XWPFTable table = context.getClosestTable();
+        CTTblPr tblPr = table.getCTTbl().getTblPr();
+        if (BooleanUtils.toBoolean(element.attr(HtmlConstants.ATTR_TABLE_CENTER))){
+            tblPr.addNewJc().setVal(STJcTable.CENTER);
+        }
         int containerWidth = context.getAvailableWidthInEMU();
 
         CSSLength width = CSSLength.of(widthDeclaration);
@@ -113,6 +110,10 @@ public class TableRenderer implements ElementRenderer {
         LinkedHashSet<SpanWidth> spanWidths = new LinkedHashSet<>();
         for (int r = 0; r < trs.size(); r++) {
             Element tr = trs.get(r);
+            CSSStyleDeclarationImpl trStyleDeclaration = CSSStyleUtils.parseNew(tr.attr(HtmlConstants.ATTR_STYLE));
+            String visibility = trStyleDeclaration.getPropertyValue(HtmlConstants.CSS_VISIBILITY);
+            if (HtmlConstants.COLLAPSE.equals(visibility))
+                break;
             XWPFTableRow row = createRow(table, r);
 
             Elements tds = JsoupUtils.children(tr, HtmlConstants.TAG_TH, HtmlConstants.TAG_TD);
@@ -159,7 +160,21 @@ public class TableRenderer implements ElementRenderer {
                 }
 
                 CSSStyleDeclarationImpl tdStyleDeclaration = CSSStyleUtils.parseNew(td.attr(HtmlConstants.ATTR_STYLE));
-                CSSLength tdWidth = CSSLength.of(tdStyleDeclaration.getWidth());
+                CSSLength tdWidth = StringUtils.isBlank(tdStyleDeclaration.getWidth()) ? CSSLength.of(td.attr("width")) : CSSLength.of(tdStyleDeclaration.getWidth());
+                if (tdWidth != null && !tblPr.isSetTblLayout()) {
+                    CTTblLayoutType ctTblLayoutType = tblPr.addNewTblLayout();
+                    ctTblLayoutType.setType(STTblLayoutType.Enum.forInt(1));
+                }
+                for (Map.Entry<Integer, Span> entry : rowSpanMap.entrySet()) {
+                    if (entry.getKey().intValue() <= columnIndex && entry.getValue().isEnabled()) {
+                        columnIndex += entry.getValue().getColumn();
+                        entry.getValue().setEnabled(false);
+                        addVMergeCell(row, c, entry.getValue());
+                        vMergeCount++;
+                    }
+                }
+                td.attr(HtmlConstants.ATTR_ROW_INDEX, String.valueOf(r));
+                td.attr(HtmlConstants.ATTR_COLUMN_INDEX, String.valueOf(c + vMergeCount));
 
                 // 必须晚于之前列的行合并单元格创建
                 XWPFTableCell cell = createCell(row, c);

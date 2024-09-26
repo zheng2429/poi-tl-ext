@@ -102,6 +102,7 @@ public interface HtmlConstants {
     String ATTR_COLSPAN = "colspan";
     String ATTR_HREF = "href";
     String ATTR_TYPE = "type";
+    String ATTR_TABLE_CENTER = "data-table-center-table";
     /**
      * 自定义属性：行索引
      */
