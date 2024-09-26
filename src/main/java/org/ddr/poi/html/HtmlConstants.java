@@ -31,6 +31,8 @@ public interface HtmlConstants {
     String TAG_A = "a";
     String TAG_IMG = "img";
     String TAG_BR = "br";
+    String TAG_PAGE = "page";
+    String TAG_CATALOG = "catalog";
     String TAG_MATH = "math";
     String TAG_HR = "hr";
     String TAG_OL = "ol";
