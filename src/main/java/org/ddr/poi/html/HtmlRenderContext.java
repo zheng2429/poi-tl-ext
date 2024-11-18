@@ -1316,6 +1316,8 @@ public class HtmlRenderContext extends RenderContext<String> {
                 }
 
                 RenderUtils.paragraphStyle(this, xwpfParagraph, cssStyleDeclaration);
+            } else {
+                RenderUtils.paragraphStyle(this, dedupeParagraph, cssStyleDeclaration);
             }
         }
 

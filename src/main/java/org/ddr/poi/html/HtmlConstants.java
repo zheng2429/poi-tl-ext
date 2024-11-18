@@ -17,7 +17,6 @@
 package org.ddr.poi.html;
 
 import org.apache.commons.compress.utils.Sets;
-import org.ddr.poi.html.util.Colors;
 
 import java.util.Set;
 
@@ -169,6 +168,7 @@ public interface HtmlConstants {
     String CSS_WHITE_SPACE = "white-space";
     String CSS_LIST_STYLE = "list-style";
     String CSS_LIST_STYLE_TYPE = "list-style-type";
+    String CSS_LIST_STYLE_POSITION = "list-style-position";
     String CSS_BORDER_COLLAPSE = "border-collapse";
     String CSS_BORDER_SPACING = "border-spacing";
     String CSS_CAPTION_SIDE = "caption-side";
@@ -236,6 +236,7 @@ public interface HtmlConstants {
     String QUESTION = "?";
     String PLUS = "+";
     String MINUS = "-";
+    String LEFT_PARENTHESIS = "(";
 
     String LINE_THROUGH = "line-through";
     String UNDERLINE = "underline";
@@ -265,6 +266,9 @@ public interface HtmlConstants {
     String PRE_LINE = "pre-line";
     String BREAK_SPACES = "break-spaces";
 
+    String INSIDE = "inside";
+    String OUTSIDE = "outside";
+
     Set<String> FONT_STYLES = Sets.newHashSet(NORMAL, ITALIC, OBLIQUE);
     Set<String> FONT_VARIANTS = Sets.newHashSet(NORMAL, SMALL_CAPS);
     Set<String> FONT_WEIGHTS = Sets.newHashSet(NORMAL, BOLD, BOLDER, LIGHTER);
@@ -272,6 +276,7 @@ public interface HtmlConstants {
     // 不支持overline
     Set<String> TEXT_DECORATION_LINES = Sets.newHashSet(UNDERLINE, LINE_THROUGH);
     Set<String> TEXT_DECORATION_STYLES = Sets.newHashSet(SOLID, DOUBLE, DOTTED, DASHED, WAVY);
+    Set<String> LIST_STYLE_POSITIONS = Sets.newHashSet(INSIDE, OUTSIDE);
 
     /**
      * 可继承的样式
@@ -339,7 +344,6 @@ public interface HtmlConstants {
     String DEFINED_SUBSCRIPT = inlineStyle(CSS_VERTICAL_ALIGN, SUB);
     String DEFINED_LARGER = inlineStyle(CSS_FONT_SIZE, LARGER);
     String DEFINED_SMALLER = inlineStyle(CSS_FONT_SIZE, SMALLER);
-    String DEFINED_MARK = inlineStyle(CSS_BACKGROUND_COLOR, Colors.getColorByName("yellow"));
     String DEFINED_PRE = inlineStyle(CSS_WHITE_SPACE, PRE);
 
     /**
