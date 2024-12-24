@@ -441,12 +441,16 @@ public class RenderUtils {
             CTPPr pPr = getPPr(paragraph.getCTP());
             CTInd ind = getInd(pPr);
             double indent;
-            if (cssLength.isPercent()) {
-                indent = context.getAvailableWidthInEMU() * cssLength.unitValue() / CSSLengthUnit.TWIP.absoluteFactor();
-            } else {
-                indent = context.lengthToEMU(cssLength) / CSSLengthUnit.TWIP.absoluteFactor();
+            if (cssLength.getUnit()==CSSLengthUnit.EM){
+                ind.setFirstLineChars(BigInteger.valueOf(Math.round(cssLength.getValue())*100));
+            }else {
+                if (cssLength.isPercent()) {
+                    indent = context.getAvailableWidthInEMU() * cssLength.unitValue() / CSSLengthUnit.TWIP.absoluteFactor();
+                } else {
+                    indent = context.lengthToEMU(cssLength) / CSSLengthUnit.TWIP.absoluteFactor();
+                }
+                ind.setFirstLine(BigInteger.valueOf(Math.round(indent)));
             }
-            ind.setFirstLine(BigInteger.valueOf(Math.round(indent)));
             return true;
         }
         return false;
