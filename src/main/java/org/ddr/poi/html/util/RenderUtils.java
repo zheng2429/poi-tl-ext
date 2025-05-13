@@ -35,7 +35,6 @@ import org.ddr.poi.html.HtmlRenderContext;
 import org.openxmlformats.schemas.drawingml.x2006.main.CTPoint2D;
 import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.CTAnchor;
 import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.CTInline;
-import org.openxmlformats.schemas.drawingml.x2006.wordprocessingDrawing.STWrapText;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTBorder;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTColor;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTDrawing;
@@ -313,7 +312,7 @@ public class RenderUtils {
         }
 
         // border
-        setBorder(paragraph, cssStyleDeclaration);
+        setBorder(context, paragraph, cssStyleDeclaration);
 
         // spacing
         setSpacing(context, paragraph, cssStyleDeclaration);
@@ -455,6 +454,7 @@ public class RenderUtils {
     /**
      * 设置段落边框样式
      *
+     * @param context 上下文
      * @param xwpfElement 段落
      * @param cssStyleDeclaration CSS边框样式声明
      * @param styleProperty CSS边框属性名称
@@ -463,7 +463,7 @@ public class RenderUtils {
      * @param getter 获取边框对象的方式
      * @return 边框是否为none
      */
-    private static boolean setBorder(Object xwpfElement, CSSStyleDeclarationImpl cssStyleDeclaration,
+    private static boolean setBorder(HtmlRenderContext context, Object xwpfElement, CSSStyleDeclarationImpl cssStyleDeclaration,
                                      String styleProperty, String widthProperty, String colorProperty,
                                      Function<Object, CTBorder> getter) {
         String borderStyle = cssStyleDeclaration.getPropertyValue(styleProperty);
@@ -475,11 +475,11 @@ public class RenderUtils {
             border.setVal(style);
 
             String borderColor = cssStyleDeclaration.getPropertyValue(colorProperty);
-            String color = Colors.fromStyle(borderColor);
+            String color = Colors.TRANSPARENT.equals(borderColor) ? Colors.WHITE : Colors.fromStyle(borderColor);
             border.setColor(color);
 
             if (width.isValid() && !width.isPercent()) {
-                long widthValue = Math.round(width.to(CSSLengthUnit.PX).getValue()) * BORDER_WIDTH_PER_PX;
+                long widthValue = (long) context.lengthToEMU(width) * BORDER_WIDTH_PER_PX / Units.EMU_PER_PIXEL;
                 if (widthValue < MIN_BORDER_WIDTH) {
                     widthValue = MIN_BORDER_WIDTH;
                 } else if (widthValue > MAX_BORDER_WIDTH) {
@@ -679,7 +679,7 @@ public class RenderUtils {
         }
 
         // border
-        boolean allNone = setBorder(table, cssStyleDeclaration);
+        boolean allNone = setBorder(context, table, cssStyleDeclaration);
         // 如果四边都是none则将单元格间的边框也置为none
         if (allNone) {
             CTTblPr tblPr = getTblPr(table.getCTTbl());
@@ -731,7 +731,7 @@ public class RenderUtils {
         }
 
         // border
-        setBorder(cell, cssStyleDeclaration);
+        setBorder(context, cell, cssStyleDeclaration);
 
         // background
         String backgroundColor = cssStyleDeclaration.getBackgroundColor();
@@ -794,14 +794,14 @@ public class RenderUtils {
      * @param cssStyleDeclaration CSS样式声明
      * @return 是否四边全部为none
      */
-    public static boolean setBorder(Object xwpfElement, CSSStyleDeclarationImpl cssStyleDeclaration) {
-        boolean topNone = setBorder(xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_TOP_STYLE,
+    public static boolean setBorder(HtmlRenderContext context, Object xwpfElement, CSSStyleDeclarationImpl cssStyleDeclaration) {
+        boolean topNone = setBorder(context, xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_TOP_STYLE,
                 HtmlConstants.CSS_BORDER_TOP_WIDTH, HtmlConstants.CSS_BORDER_TOP_COLOR, RenderUtils::getTop);
-        boolean rightNone = setBorder(xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_RIGHT_STYLE,
+        boolean rightNone = setBorder(context, xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_RIGHT_STYLE,
                 HtmlConstants.CSS_BORDER_RIGHT_WIDTH, HtmlConstants.CSS_BORDER_RIGHT_COLOR, RenderUtils::getRight);
-        boolean bottomNone = setBorder(xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_BOTTOM_STYLE,
+        boolean bottomNone = setBorder(context, xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_BOTTOM_STYLE,
                 HtmlConstants.CSS_BORDER_BOTTOM_WIDTH, HtmlConstants.CSS_BORDER_BOTTOM_COLOR, RenderUtils::getBottom);
-        boolean leftNone = setBorder(xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_LEFT_STYLE,
+        boolean leftNone = setBorder(context, xwpfElement, cssStyleDeclaration, HtmlConstants.CSS_BORDER_LEFT_STYLE,
                 HtmlConstants.CSS_BORDER_LEFT_WIDTH, HtmlConstants.CSS_BORDER_LEFT_COLOR, RenderUtils::getLeft);
         return topNone && rightNone && bottomNone && leftNone;
     }
@@ -904,9 +904,12 @@ public class RenderUtils {
         ctAnchor.setDocPr(ctInline.getDocPr());
         ctAnchor.setExtent(ctInline.getExtent());
         ctAnchor.setGraphic(ctInline.getGraphic());
+        if (ctInline.isSetCNvGraphicFramePr()) {
+            ctAnchor.setCNvGraphicFramePr(ctInline.getCNvGraphicFramePr());
+        }
         drawing.removeInline(0);
 
-        ctAnchor.setAllowOverlap(true);
+        ctAnchor.setAllowOverlap(false);
         ctAnchor.setBehindDoc(false);
         ctAnchor.setRelativeHeight(0);
         ctAnchor.setDistL(0);
@@ -915,7 +918,6 @@ public class RenderUtils {
         ctAnchor.setDistT(0);
         ctAnchor.setLayoutInCell(true);
         ctAnchor.setLocked(false);
-        ctAnchor.addNewWrapSquare().setWrapText(STWrapText.BOTH_SIDES);
 
         ctAnchor.setSimplePos2(false);
         CTPoint2D simplePos = ctAnchor.addNewSimplePos();
